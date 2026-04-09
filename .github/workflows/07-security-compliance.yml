@@ -1,0 +1,269 @@
+name: 🔐 Security & Compliance
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    - cron: '0 3 * * *'  # Daily at 3 AM UTC
+
+permissions:
+  contents: read
+  security-events: write
+  packages: read
+
+jobs:
+  dependency-scan:
+    name: 🔍 Dependency Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: |
+          npm ci
+
+      - name: 📊 npm audit
+        run: npm audit --audit-level moderate
+        continue-on-error: true
+
+      - name: 🔐 Snyk Security Scan
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high --json-file-output=snyk-results.json
+        continue-on-error: true
+
+      - name: 📤 Upload Snyk results
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: snyk.sarif
+        if: always()
+
+  container-scan:
+    name: 🐳 Container Image Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔐 Trivy file scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-fs-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: 📤 Upload Trivy results
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: trivy-fs-results.sarif
+          category: trivy-fs
+
+  secret-scanning:
+    name: 🔑 Secret Detection
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔑 GitGuardian scan
+        uses: GitGuardian/ggshield-action@master
+        env:
+          GITGUARDIAN_API_KEY: ${{ secrets.GITGUARDIAN_API_KEY }}
+          GITHUB_PUSH_BEFORE_SHA: ${{ github.event.before }}
+          GITHUB_PUSH_BASE_SHA: ${{ github.event.base }}
+          GITHUB_PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GITHUB_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        continue-on-error: true
+
+      - name: 🔑 Detect secrets with TruffleHog
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+
+  sast-scan:
+    name: 📝 SAST (Static Analysis)
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: npm ci
+
+      - name: 📊 SonarQube scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        continue-on-error: true
+
+      - name: 🔍 ESLint security scan
+        run: |
+          npm install -g eslint-plugin-security
+          npx eslint . --ext .ts,.tsx --plugin security
+        continue-on-error: true
+
+  codeql-scan:
+    name: 🤖 CodeQL Analysis
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        language: ['typescript', 'javascript']
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Initialize CodeQL
+        uses: github/codeql-action/init@v2
+        with:
+          languages: ${{ matrix.language }}
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: npm ci
+
+      - name: 🏗️ Build
+        run: |
+          cd backend && npm run build
+          cd ../frontend && npm run build
+
+      - name: 📊 Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v2
+
+  license-scan:
+    name: 📜 License Compliance
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: npm ci
+
+      - name: 📜 Check licenses
+        run: |
+          npm install -g license-checker
+          license-checker --csv > licenses.csv
+          echo "License report:"
+          cat licenses.csv
+
+      - name: 📤 Upload license report
+        uses: actions/upload-artifact@v4
+        with:
+          name: license-report
+          path: licenses.csv
+
+  owasp-dependency-check:
+    name: 🛡️ OWASP Dependency Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🛡️ Run OWASP Dependency Check
+        uses: dependency-check/Dependency-Check_Action@main
+        with:
+          project: 'Travel-Agency-Airline-Booking'
+          path: '.'
+          format: 'JSON'
+          args: >
+            --enableExperimental
+            --enableVerbose
+
+      - name: 📤 Upload OWASP report
+        uses: actions/upload-artifact@v4
+        with:
+          name: owasp-dependency-check-report
+          path: reports/dependency-check-report.json
+
+  infrastructure-scan:
+    name: 🏗️ Infrastructure Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔐 Checkov scan
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: ./infrastructure
+          framework: kubernetes,dockerfile,cloudformation
+          output_format: sarif
+          output_file_path: reports/checkov.sarif
+        continue-on-error: true
+
+      - name: 📤 Upload Checkov results
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: reports/checkov.sarif
+          category: checkov
+
+  dast-baseline:
+    name: 🔍 DAST (Baseline Scan)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔍 OWASP ZAP Scan
+        uses: zaproxy/action-baseline@v0.4.0
+        with:
+          target: 'https://staging-api.airline-booking.dev'
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-a'
+
+  compliance-report:
+    name: 📋 Compliance Report
+    runs-on: ubuntu-latest
+    needs: [dependency-scan, container-scan, secret-scanning, sast-scan, codeql-scan, license-scan, owasp-dependency-check]
+    if: always()
+    steps:
+      - name: 📊 Generate compliance report
+        run: |
+          echo "## 🔐 Security & Compliance Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "- Dependency Scan: ${{ needs.dependency-scan.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Container Scan: ${{ needs.container-scan.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Secret Scanning: ${{ needs.secret-scanning.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- SAST: ${{ needs.sast-scan.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- CodeQL: ${{ needs.codeql-scan.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- License Check: ${{ needs.license-scan.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- OWASP: ${{ needs.owasp-dependency-check.result }}" >> $GITHUB_STEP_SUMMARY

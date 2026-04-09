@@ -1,0 +1,208 @@
+name: 🚀 Deploy Staging
+
+on:
+  push:
+    branches: [develop, staging]
+    tags: ['v*-staging']
+  workflow_run:
+    workflows: ['🐳 Build & Push Docker Images']
+    types: [completed]
+    branches: [develop, staging]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - staging-canary
+
+concurrency:
+  group: deploy-staging-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy-staging:
+    name: 🚀 Deploy to Staging
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success' || github.event_name != 'workflow_run'
+    environment:
+      name: staging
+      url: https://staging-api.airline-booking.dev
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔧 Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_STAGING }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_STAGING }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: 🔑 Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: 📝 Extract image metadata
+        id: meta
+        run: |
+          echo "backend-image=${{ steps.login-ecr.outputs.registry }}/airline-booking/backend:${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "frontend-image=${{ steps.login-ecr.outputs.registry }}/airline-booking/frontend:${{ github.sha }}" >> $GITHUB_OUTPUT
+
+      - name: 🐳 Update ECS task definition (Backend)
+        id: update-backend-task
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ./infrastructure/ecs/task-definitions/backend-task.json
+          container-name: airline-booking-backend
+          image: ${{ steps.meta.outputs.backend-image }}
+
+      - name: 🚀 Deploy backend to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.update-backend-task.outputs.task-definition }}
+          service: airline-booking-backend-staging
+          cluster: airline-booking-staging
+          wait-for-service-stability: true
+
+      - name: 🐳 Update ECS task definition (Frontend)
+        id: update-frontend-task
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ./infrastructure/ecs/task-definitions/frontend-task.json
+          container-name: airline-booking-frontend
+          image: ${{ steps.meta.outputs.frontend-image }}
+
+      - name: 🚀 Deploy frontend to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.update-frontend-task.outputs.task-definition }}
+          service: airline-booking-frontend-staging
+          cluster: airline-booking-staging
+          wait-for-service-stability: true
+
+      - name: 🗄️ Run database migrations
+        run: |
+          ./infrastructure/scripts/run-migrations.sh staging
+
+      - name: 🔄 Verify deployment
+        run: |
+          echo "Verifying backend health check..."
+          curl -f https://staging-api.airline-booking.dev/health || exit 1
+          echo "Verifying frontend health check..."
+          curl -f https://staging-web.airline-booking.dev/ || exit 1
+
+      - name: 📢 Notify deployment success
+        if: success()
+        run: |
+          curl -X POST ${{ secrets.SLACK_WEBHOOK_URL_STAGING }} \
+            -H 'Content-Type: application/json' \
+            -d '{
+              "text": "✅ Staging deployment successful",
+              "blocks": [{
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*Staging Deployment Successful* ✅\nCommit: ${{ github.sha }}\nBranch: ${{ github.ref }}\nAuthor: ${{ github.actor }}"
+                }
+              }]
+            }'
+
+      - name: 📢 Notify deployment failure
+        if: failure()
+        run: |
+          curl -X POST ${{ secrets.SLACK_WEBHOOK_URL_STAGING }} \
+            -H 'Content-Type: application/json' \
+            -d '{
+              "text": "❌ Staging deployment failed",
+              "blocks": [{
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*Staging Deployment Failed* ❌\nCommit: ${{ github.sha }}\nBranch: ${{ github.ref }}\nAuthor: ${{ github.actor }}"
+                }
+              }]
+            }'
+
+  smoke-tests:
+    name: 🧪 Smoke Tests
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: |
+          npm ci --prefix ./tests/smoke
+
+      - name: 🧪 Run smoke tests
+        env:
+          API_URL: https://staging-api.airline-booking.dev
+          WEB_URL: https://staging-web.airline-booking.dev
+          TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL }}
+          TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}
+        run: |
+          npm run test:smoke --prefix ./tests/smoke
+
+      - name: 📊 Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test-results
+          path: ./tests/smoke/results/
+
+  rollback:
+    name: 🔄 Rollback on Failure
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, smoke-tests]
+    if: failure()
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_STAGING }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_STAGING }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: 🔄 Rollback to previous version
+        run: |
+          echo "Rolling back to previous version..."
+          aws ecs update-service \
+            --cluster airline-booking-staging \
+            --service airline-booking-backend-staging \
+            --force-new-deployment
+
+          aws ecs update-service \
+            --cluster airline-booking-staging \
+            --service airline-booking-frontend-staging \
+            --force-new-deployment
+
+      - name: 📢 Notify rollback
+        run: |
+          curl -X POST ${{ secrets.SLACK_WEBHOOK_URL_STAGING }} \
+            -H 'Content-Type: application/json' \
+            -d '{
+              "text": "⚠️ Staging deployment rolled back",
+              "blocks": [{
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*Staging Deployment Rolled Back* ⚠️\nCommit: ${{ github.sha }}\nReason: Smoke tests or deployment failed"
+                }
+              }]
+            }'

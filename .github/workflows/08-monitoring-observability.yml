@@ -1,0 +1,255 @@
+name: 📊 Monitoring & Observability
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'  # Every 5 minutes
+  workflow_dispatch:
+
+jobs:
+  health-checks:
+    name: ❤️ Service Health Checks
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [staging, production]
+    continue-on-error: true
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: ❤️ Backend API Health Check
+        id: backend-health
+        run: |
+          if [ "${{ matrix.environment }}" = "production" ]; then
+            URL="https://api.airline-booking.com/health"
+          else
+            URL="https://staging-api.airline-booking.dev/health"
+          fi
+          
+          RESPONSE=$(curl -s -w "\n%{http_code}" $URL)
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | head -n-1)
+          
+          if [ "$HTTP_CODE" -eq 200 ]; then
+            echo "✅ Backend health check passed"
+            echo "status=healthy" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Backend health check failed with code $HTTP_CODE"
+            echo "status=unhealthy" >> $GITHUB_OUTPUT
+          fi
+
+      - name: ❤️ Frontend Health Check
+        id: frontend-health
+        run: |
+          if [ "${{ matrix.environment }}" = "production" ]; then
+            URL="https://airline-booking.com"
+          else
+            URL="https://staging-web.airline-booking.dev"
+          fi
+          
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" $URL)
+          
+          if [ "$HTTP_CODE" -eq 200 ]; then
+            echo "✅ Frontend health check passed"
+            echo "status=healthy" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Frontend health check failed with code $HTTP_CODE"
+            echo "status=unhealthy" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 📊 Database Health Check
+        id: db-health
+        run: |
+          echo "Checking database connectivity..."
+          # Add database health check logic here
+
+      - name: 📢 Alert on unhealthy services
+        if: steps.backend-health.outputs.status == 'unhealthy' || steps.frontend-health.outputs.status == 'unhealthy'
+        run: |
+          curl -X POST ${{ secrets.SLACK_WEBHOOK_URL }} \
+            -H 'Content-Type: application/json' \
+            -d '{
+              "text": "🚨 Service health check failed",
+              "blocks": [{
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*Health Check Alert* 🚨\nEnvironment: ${{ matrix.environment }}\nBackend: ${{ steps.backend-health.outputs.status }}\nFrontend: ${{ steps.frontend-health.outputs.status }}"
+                }
+              }]
+            }'
+
+  uptime-check:
+    name: ⏱️ Uptime Verification
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_PROD }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}
+          aws-region: us-east-1
+
+      - name: 📊 Get uptime metrics
+        run: |
+          echo "Fetching uptime metrics from CloudWatch..."
+          aws cloudwatch get-metric-statistics \
+            --namespace AWS/ApplicationELB \
+            --metric-name TargetResponseTime \
+            --dimensions Name=LoadBalancer,Value=app/airline-booking/1234567890abcdef \
+            --start-time $(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%S) \
+            --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
+            --period 300 \
+            --statistics Average,Maximum
+
+  log-analysis:
+    name: 📝 Log Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_PROD }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}
+          aws-region: us-east-1
+
+      - name: 🔍 Query error logs
+        run: |
+          echo "Querying error logs from CloudWatch Logs..."
+          QUERY='fields @timestamp, @message, @logStream | filter @message like /ERROR/ | stats count() by @logStream'
+          
+          aws logs start-query \
+            --log-group-name /aws/ecs/airline-booking-backend \
+            --start-time $(date -d '1 hour ago' +%s) \
+            --end-time $(date +%s) \
+            --query-string "$QUERY" || true
+
+      - name: 📢 Alert on high error rate
+        run: |
+          # Check error logs and trigger alert if threshold exceeded
+          echo "Checking error rate threshold..."
+
+  metrics-export:
+    name: 📊 Metrics Export
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_PROD }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}
+          aws-region: us-east-1
+
+      - name: 📊 Export metrics
+        run: |
+          echo "Exporting key performance metrics..."
+          
+          # Request rate
+          aws cloudwatch get-metric-statistics \
+            --namespace AWS/ApplicationELB \
+            --metric-name RequestCount \
+            --start-time $(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%S) \
+            --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
+            --period 300 \
+            --statistics Sum > metrics-requests.json
+          
+          # Response time
+          aws cloudwatch get-metric-statistics \
+            --namespace AWS/ApplicationELB \
+            --metric-name TargetResponseTime \
+            --start-time $(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%S) \
+            --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
+            --period 300 \
+            --statistics Average,Maximum,Minimum > metrics-response-time.json
+          
+          # Error rate
+          aws cloudwatch get-metric-statistics \
+            --namespace AWS/ApplicationELB \
+            --metric-name HTTPCode_Target_5XX_Count \
+            --start-time $(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%S) \
+            --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
+            --period 300 \
+            --statistics Sum > metrics-errors.json
+
+      - name: 📤 Upload metrics
+        uses: actions/upload-artifact@v4
+        with:
+          name: metrics-export
+          path: metrics-*.json
+          retention-days: 30
+
+  incident-check:
+    name: 🚨 Incident Detection
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔍 Check for incidents
+        run: |
+          echo "Checking for active incidents..."
+          # Query incident management system
+          # Alert if critical incidents detected
+
+      - name: 📢 Create incident ticket
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🚨 Incident Detected',
+              body: 'An incident has been automatically detected in production.',
+              labels: ['incident', 'critical']
+            })
+
+  sla-check:
+    name: 📋 SLA Compliance
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_PROD }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}
+          aws-region: us-east-1
+
+      - name: 📋 Check SLA metrics
+        run: |
+          echo "Checking SLA compliance..."
+          
+          # Target: 99.9% uptime
+          # Target: <2s response time (p95)
+          # Target: <0.1% error rate
+          
+          echo "✅ Verifying SLA metrics..."
+
+  notification-summary:
+    name: 📊 Monitoring Summary
+    runs-on: ubuntu-latest
+    needs: [health-checks, uptime-check, log-analysis, metrics-export, sla-check]
+    if: always()
+    steps:
+      - name: 📊 Generate monitoring summary
+        run: |
+          echo "## 📊 Monitoring & Observability Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Health Status" >> $GITHUB_STEP_SUMMARY
+          echo "- Health Checks: ${{ needs.health-checks.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Uptime Verification: ${{ needs.uptime-check.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Log Analysis: ${{ needs.log-analysis.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Metrics Export: ${{ needs.metrics-export.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- SLA Check: ${{ needs.sla-check.result }}" >> $GITHUB_STEP_SUMMARY

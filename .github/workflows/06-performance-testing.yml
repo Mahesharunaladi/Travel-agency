@@ -1,0 +1,286 @@
+name: 📊 Performance & Load Testing
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM UTC
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to test'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      test_type:
+        description: 'Type of test'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - load
+          - stress
+          - soak
+          - spike
+
+jobs:
+  setup:
+    name: 🔧 Setup Test Environment
+    runs-on: ubuntu-latest
+    outputs:
+      api-url: ${{ steps.setup.outputs.api-url }}
+      test-duration: ${{ steps.setup.outputs.test-duration }}
+    steps:
+      - name: 🔧 Setup environment
+        id: setup
+        run: |
+          if [ "${{ github.event.inputs.environment }}" = "production" ]; then
+            echo "api-url=https://api.airline-booking.com" >> $GITHUB_OUTPUT
+            echo "test-duration=5m" >> $GITHUB_OUTPUT
+          else
+            echo "api-url=https://staging-api.airline-booking.dev" >> $GITHUB_OUTPUT
+            echo "test-duration=10m" >> $GITHUB_OUTPUT
+          fi
+
+  load-test:
+    name: 📈 Load Test
+    runs-on: ubuntu-latest
+    needs: setup
+    if: contains(github.event.inputs.test_type, 'load') || github.event.inputs.test_type == 'all'
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Install k6
+        run: |
+          sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3232A
+          echo "deb https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt update
+          sudo apt install k6
+
+      - name: 📈 Run load test
+        env:
+          API_URL: ${{ needs.setup.outputs.api-url }}
+          K6_VUS: '50'
+          K6_DURATION: ${{ needs.setup.outputs.test-duration }}
+        run: |
+          mkdir -p test-results
+          k6 run ./tests/performance/load-test.js \
+            --vus $K6_VUS \
+            --duration $K6_DURATION \
+            --out json=test-results/load-test-results.json
+
+      - name: 📊 Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-results
+          path: test-results/
+
+  stress-test:
+    name: 🔥 Stress Test
+    runs-on: ubuntu-latest
+    needs: setup
+    if: contains(github.event.inputs.test_type, 'stress') || github.event.inputs.test_type == 'all'
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Install k6
+        run: |
+          sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3232A
+          echo "deb https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt update
+          sudo apt install k6
+
+      - name: 🔥 Run stress test
+        env:
+          API_URL: ${{ needs.setup.outputs.api-url }}
+          K6_VUS: '500'
+          K6_DURATION: '5m'
+        continue-on-error: true
+        run: |
+          mkdir -p test-results
+          k6 run ./tests/performance/stress-test.js \
+            --vus $K6_VUS \
+            --duration 5m \
+            --out json=test-results/stress-test-results.json
+
+      - name: 📊 Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stress-test-results
+          path: test-results/
+
+  soak-test:
+    name: 🌊 Soak Test
+    runs-on: ubuntu-latest
+    needs: setup
+    if: contains(github.event.inputs.test_type, 'soak') || github.event.inputs.test_type == 'all'
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Install k6
+        run: |
+          sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3232A
+          echo "deb https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt update
+          sudo apt install k6
+
+      - name: 🌊 Run soak test
+        env:
+          API_URL: ${{ needs.setup.outputs.api-url }}
+          K6_VUS: '10'
+          K6_DURATION: '30m'
+        continue-on-error: true
+        run: |
+          mkdir -p test-results
+          k6 run ./tests/performance/soak-test.js \
+            --vus $K6_VUS \
+            --duration 30m \
+            --out json=test-results/soak-test-results.json
+
+      - name: 📊 Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-test-results
+          path: test-results/
+
+  spike-test:
+    name: 📍 Spike Test
+    runs-on: ubuntu-latest
+    needs: setup
+    if: contains(github.event.inputs.test_type, 'spike') || github.event.inputs.test_type == 'all'
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Install k6
+        run: |
+          sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3232A
+          echo "deb https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt update
+          sudo apt install k6
+
+      - name: 📍 Run spike test
+        env:
+          API_URL: ${{ needs.setup.outputs.api-url }}
+        continue-on-error: true
+        run: |
+          mkdir -p test-results
+          k6 run ./tests/performance/spike-test.js \
+            --out json=test-results/spike-test-results.json
+
+      - name: 📊 Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spike-test-results
+          path: test-results/
+
+  synthetic-monitoring:
+    name: 🔍 Synthetic Monitoring
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: |
+          npm ci --prefix ./tests/synthetic
+
+      - name: 🔍 Run synthetic tests
+        env:
+          API_URL: ${{ needs.setup.outputs.api-url }}
+        run: |
+          npm run test:synthetic --prefix ./tests/synthetic
+
+      - name: 📊 Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-test-results
+          path: ./tests/synthetic/results/
+
+  analyze-results:
+    name: 📊 Analyze Results
+    runs-on: ubuntu-latest
+    needs: [load-test, stress-test, soak-test, spike-test, synthetic-monitoring]
+    if: always()
+    steps:
+      - name: 📥 Download all results
+        uses: actions/download-artifact@v4
+        with:
+          path: test-results/
+
+      - name: 📊 Analyze performance metrics
+        run: |
+          echo "## 📊 Performance Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Check load test results
+          if [ -f "test-results/load-test-results/load-test-results.json" ]; then
+            echo "### Load Test" >> $GITHUB_STEP_SUMMARY
+            echo "✅ Completed" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Check stress test results
+          if [ -f "test-results/stress-test-results/stress-test-results.json" ]; then
+            echo "### Stress Test" >> $GITHUB_STEP_SUMMARY
+            echo "✅ Completed" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: 📈 Generate performance report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            
+            // Analyze test results and create report
+            console.log('Analyzing performance test results...');
+
+      - name: 📢 Notify results
+        if: always()
+        run: |
+          curl -X POST ${{ secrets.SLACK_WEBHOOK_URL }} \
+            -H 'Content-Type: application/json' \
+            -d '{
+              "text": "📊 Performance test completed",
+              "blocks": [{
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*Performance Test Complete*\nEnvironment: ${{ github.event.inputs.environment || 'staging' }}\nTest Types: Load, Stress, Soak, Spike"
+                }
+              }]
+            }'
+
+  performance-summary:
+    name: 📋 Performance Summary
+    runs-on: ubuntu-latest
+    needs: [load-test, stress-test, soak-test, spike-test, synthetic-monitoring]
+    if: always()
+    steps:
+      - name: 📊 Generate summary
+        run: |
+          echo "## 🎯 Performance Testing Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "- Load Test: ${{ needs.load-test.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Stress Test: ${{ needs.stress-test.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Soak Test: ${{ needs.soak-test.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Spike Test: ${{ needs.spike-test.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Synthetic Monitoring: ${{ needs.synthetic-monitoring.result }}" >> $GITHUB_STEP_SUMMARY

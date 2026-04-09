@@ -1,0 +1,275 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Users and Authentication
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  password      String
+  firstName     String
+  lastName      String
+  phone         String?
+  avatarUrl     String?
+  tier          Tier      @default(STANDARD)
+  loyaltyPoints Int       @default(0)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+
+  // Relations
+  bookings      Booking[]
+  payments      Payment[]
+  supportTickets SupportTicket[]
+
+  @@index([email])
+  @@index([tier])
+}
+
+enum Tier {
+  STANDARD
+  PLUS
+  PREMIUM
+}
+
+// Flights
+model Airline {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  logoUrl   String?
+  createdAt DateTime @default(now())
+
+  flights Flight[]
+}
+
+model Airport {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  city      String
+  country   String
+  createdAt DateTime @default(now())
+
+  departureFlights Flight[] @relation("departure")
+  arrivalFlights   Flight[] @relation("arrival")
+}
+
+model Flight {
+  id              String   @id @default(cuid())
+  flightNumber    String
+  airlineId       String
+  departureId     String
+  arrivalId       String
+  departureTime   DateTime
+  arrivalTime     DateTime
+  basePrice       Float
+  availableSeats  Int
+  totalSeats      Int
+  aircraftType    String?
+  duration        Int?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  airline         Airline  @relation(fields: [airlineId], references: [id])
+  departure       Airport  @relation("departure", fields: [departureId], references: [id])
+  arrival         Airport  @relation("arrival", fields: [arrivalId], references: [id])
+  bookings        Booking[]
+  seatInventory   SeatInventory[]
+
+  @@index([flightNumber])
+  @@index([departureId, arrivalId])
+  @@index([departureTime])
+}
+
+model SeatInventory {
+  id        String   @id @default(cuid())
+  flightId  String
+  seatNumber String
+  status    SeatStatus @default(AVAILABLE)
+  bookedBy  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  flight    Flight   @relation(fields: [flightId], references: [id], onDelete: Cascade)
+
+  @@unique([flightId, seatNumber])
+  @@index([flightId, status])
+}
+
+enum SeatStatus {
+  AVAILABLE
+  HELD
+  BOOKED
+  BLOCKED
+}
+
+// Bookings
+model Booking {
+  id            String   @id @default(cuid())
+  userId        String
+  flightId      String
+  status        BookingStatus @default(INITIATED)
+  totalPrice    Float
+  pnr           String?
+  passengers    Passenger[]
+  paymentId     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user      User     @relation(fields: [userId], references: [id])
+  flight    Flight   @relation(fields: [flightId], references: [id])
+  payment   Payment? @relation(fields: [paymentId], references: [id])
+
+  @@index([userId])
+  @@index([flightId])
+  @@index([status])
+}
+
+enum BookingStatus {
+  INITIATED
+  HELD
+  PAYMENT_PENDING
+  CONFIRMED
+  TICKETED
+  CANCELLED
+  REFUNDED
+}
+
+model Passenger {
+  id            String   @id @default(cuid())
+  bookingId     String
+  title         String
+  firstName     String
+  lastName      String
+  dateOfBirth   DateTime
+  nationality   String
+  passportNo    String?
+  email         String?
+  phone         String?
+  createdAt     DateTime @default(now())
+
+  booking       Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+}
+
+// Payments
+model Payment {
+  id            String   @id @default(cuid())
+  userId        String
+  amount        Float
+  currency      String   @default("INR")
+  status        PaymentStatus @default(INITIATED)
+  gateway       String   @default("razorpay")
+  transactionId String?
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user      User      @relation(fields: [userId], references: [id])
+  bookings  Booking[]
+  refunds   Refund[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([transactionId])
+}
+
+enum PaymentStatus {
+  INITIATED
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model Refund {
+  id        String   @id @default(cuid())
+  paymentId String
+  amount    Float
+  status    RefundStatus @default(INITIATED)
+  reason    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payment   Payment  @relation(fields: [paymentId], references: [id])
+
+  @@index([paymentId])
+  @@index([status])
+}
+
+enum RefundStatus {
+  INITIATED
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// Support
+model SupportTicket {
+  id        String   @id @default(cuid())
+  userId    String
+  subject   String
+  priority  Priority @default(P3)
+  status    TicketStatus @default(OPEN)
+  messages  TicketMessage[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([status])
+  @@index([priority])
+}
+
+enum Priority {
+  P0
+  P1
+  P2
+  P3
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+model TicketMessage {
+  id        String   @id @default(cuid())
+  ticketId  String
+  content   String
+  isInternal Boolean @default(false)
+  createdAt DateTime @default(now())
+
+  ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+}
+
+// Audit Logs
+model AuditLog {
+  id        String   @id @default(cuid())
+  action    String
+  entity    String
+  entityId  String
+  userId    String?
+  changes   Json?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([entity])
+  @@index([createdAt])
+}

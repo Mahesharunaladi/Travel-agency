@@ -1,0 +1,293 @@
+name: 🔍 Lint & Test
+on:
+  push:
+    branches: [main, develop, staging]
+  pull_request:
+    branches: [main, develop, staging]
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '18'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ─────────────────────────────────────────────────────────────
+  # BACKEND LINTING & TESTING
+  # ─────────────────────────────────────────────────────────────
+  backend-lint:
+    name: 📋 Backend Lint (NestJS)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: ['18', '20']
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔧 Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: |
+          cd backend
+          npm ci
+
+      - name: 🔍 Run ESLint
+        run: |
+          cd backend
+          npm run lint
+
+      - name: 🏗️ Check build
+        run: |
+          cd backend
+          npm run build
+
+      - name: 📝 Upload lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-lint-report-node${{ matrix.node-version }}
+          path: backend/.eslintrc
+
+  backend-test:
+    name: ✅ Backend Unit Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: airline_booking_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: |
+          cd backend
+          npm ci
+
+      - name: 🗄️ Setup test database
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/airline_booking_test
+        run: |
+          cd backend
+          npm run typeorm migration:run
+
+      - name: 🧪 Run unit tests
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/airline_booking_test
+          REDIS_URL: redis://localhost:6379
+        run: |
+          cd backend
+          npm run test -- --coverage
+
+      - name: 📊 Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./backend/coverage/lcov.info
+          flags: backend-unit
+          name: backend-coverage
+
+      - name: 📝 Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-report
+          path: backend/test-results.xml
+
+  # ─────────────────────────────────────────────────────────────
+  # FRONTEND LINTING & TESTING
+  # ─────────────────────────────────────────────────────────────
+  frontend-lint:
+    name: 📋 Frontend Lint (Next.js/React)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: ['18', '20']
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: 🔍 Run ESLint
+        run: |
+          cd frontend
+          npm run lint
+
+      - name: 📝 Run Prettier check
+        run: |
+          cd frontend
+          npm run format:check || true
+
+      - name: 🏗️ Check Next.js build
+        run: |
+          cd frontend
+          npm run build
+
+  frontend-test:
+    name: ✅ Frontend Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: 🧪 Run Jest tests
+        run: |
+          cd frontend
+          npm run test -- --coverage
+
+      - name: 📊 Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./frontend/coverage/lcov.info
+          flags: frontend-unit
+          name: frontend-coverage
+
+      - name: 📝 Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-test-report
+          path: frontend/test-results.xml
+
+  # ─────────────────────────────────────────────────────────────
+  # SECURITY CHECKS
+  # ─────────────────────────────────────────────────────────────
+  security-scan:
+    name: 🔐 Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🛡️ Run Snyk scan
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        continue-on-error: true
+
+      - name: 📤 Upload Snyk results
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: snyk.sarif
+        if: always()
+
+      - name: 🔐 Trivy file scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: 📤 Upload Trivy results
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: trivy-results.sarif
+        if: always()
+
+  # ─────────────────────────────────────────────────────────────
+  # CODE QUALITY
+  # ─────────────────────────────────────────────────────────────
+  code-quality:
+    name: 📊 Code Quality Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: |
+          cd backend && npm ci
+          cd ../frontend && npm ci
+
+      - name: 🎯 SonarQube scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        continue-on-error: true
+
+  # ─────────────────────────────────────────────────────────────
+  # SUMMARY
+  # ─────────────────────────────────────────────────────────────
+  lint-test-summary:
+    name: ✨ Summary
+    runs-on: ubuntu-latest
+    needs: [backend-lint, backend-test, frontend-lint, frontend-test, security-scan]
+    if: always()
+    steps:
+      - name: 📊 Generate summary
+        run: |
+          echo "## 🎉 Test Run Complete" >> $GITHUB_STEP_SUMMARY
+          echo "### Results:" >> $GITHUB_STEP_SUMMARY
+          echo "- Backend Lint: ${{ needs.backend-lint.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Backend Tests: ${{ needs.backend-test.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Frontend Lint: ${{ needs.frontend-lint.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Frontend Tests: ${{ needs.frontend-test.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Security Scan: ${{ needs.security-scan.result }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: ❌ Fail if tests failed
+        if: contains(needs.*.result, 'failure')
+        run: exit 1
