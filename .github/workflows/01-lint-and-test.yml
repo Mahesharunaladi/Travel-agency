@@ -7,16 +7,108 @@ on:
   workflow_dispatch:
 
 env:
+  JAVA_VERSION: '17'
   NODE_VERSION: '18'
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  MAVEN_CACHE: ~/.m2/repository
 
 jobs:
   # ─────────────────────────────────────────────────────────────
-  # BACKEND LINTING & TESTING
+  # BACKEND TESTING (JAVA/SPRING BOOT)
   # ─────────────────────────────────────────────────────────────
-  backend-lint:
-    name: 📋 Backend Lint (NestJS)
+  backend-test:
+    name: 🧪 Backend Tests (Java 17)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        java-version: ['17', '21']
+    
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: airline_booking_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔧 Setup Java ${{ matrix.java-version }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ matrix.java-version }}
+          distribution: 'temurin'
+          cache: maven
+
+      - name: 🏗️ Build with Maven
+        run: |
+          cd backend
+          mvn clean package -DskipTests \
+            -Dorg.slf4j.simpleLogger.defaultLogLevel=error
+
+      - name: 🧪 Run Unit Tests
+        run: |
+          cd backend
+          mvn test \
+            -Dorg.slf4j.simpleLogger.defaultLogLevel=error
+
+      - name: 📊 Generate Code Coverage
+        run: |
+          cd backend
+          mvn jacoco:report \
+            -Dorg.slf4j.simpleLogger.defaultLogLevel=error
+
+      - name: 📈 Upload Coverage Reports
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./backend/target/site/jacoco/jacoco.xml
+          flags: unittests
+          name: codecov-java
+          fail_ci_if_error: false
+
+      - name: 📋 Analyze with SonarQube
+        run: |
+          cd backend
+          mvn sonar:sonar \
+            -Dsonar.projectKey=airline-booking-backend \
+            -Dsonar.sources=src/main/java \
+            -Dsonar.tests=src/test/java \
+            -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
+            -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} \
+            -Dsonar.login=${{ secrets.SONAR_TOKEN }} \
+            -Dorg.slf4j.simpleLogger.defaultLogLevel=error || true
+
+      - name: 🔍 Check Build Status
+        if: failure()
+        run: echo "❌ Backend build or tests failed"
+        
+  # ─────────────────────────────────────────────────────────────
+  # FRONTEND TESTING (NEXT.JS/REACT)
+  # ─────────────────────────────────────────────────────────────
+  frontend-test:
+    name: 🧪 Frontend Tests (Next.js)
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -32,21 +124,35 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
 
       - name: 📦 Install dependencies
         run: |
-          cd backend
+          cd frontend
           npm ci
 
       - name: 🔍 Run ESLint
         run: |
-          cd backend
+          cd frontend
           npm run lint
 
       - name: 🏗️ Check build
         run: |
-          cd backend
+          cd frontend
           npm run build
+
+      - name: 🧪 Run tests
+        run: |
+          cd frontend
+          npm test -- --coverage --watchAll=false
+        continue-on-error: true
+
+      - name: 📈 Upload Coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./frontend/coverage/lcov.info
+          flags: frontend
+          fail_ci_if_error: false
 
       - name: 📝 Upload lint report
         if: always()

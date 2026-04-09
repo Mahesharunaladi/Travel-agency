@@ -1,0 +1,145 @@
+name: 📋 Documentation & Release
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '18'
+
+jobs:
+  # ─────────────────────────────────────────────────────────────
+  # GENERATE API DOCUMENTATION
+  # ─────────────────────────────────────────────────────────────
+  generate-docs:
+    name: 📚 Generate Documentation
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: 📚 Generate OpenAPI Documentation
+        run: |
+          cd backend
+          mvn clean package -DskipTests \
+            -Dorg.slf4j.simpleLogger.defaultLogLevel=error
+          mkdir -p ../docs/api
+          cp target/openapi.json ../docs/api/ || echo "OpenAPI spec not found"
+
+      - name: 📤 Upload API Documentation
+        uses: actions/upload-artifact@v3
+        with:
+          name: api-docs
+          path: docs/api/
+
+      - name: 📖 Build Docusaurus
+        run: |
+          npm install -g docusaurus-cli
+          cd docs
+          npm ci
+          npm run build || true
+
+      - name: 🚀 Deploy to GitHub Pages
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./docs/build
+
+  # ─────────────────────────────────────────────────────────────
+  # CREATE RELEASE
+  # ─────────────────────────────────────────────────────────────
+  create-release:
+    name: 🏷️ Create Release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+      packages: read
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📋 Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: 🔍 Get release notes
+        id: notes
+        run: |
+          # Parse changelog for this version
+          version=${{ steps.version.outputs.VERSION }}
+          sed -n "/^## \[$version\]/,/^## /p" CHANGELOG.md | head -n -1 > release_notes.txt || echo "No specific version notes found"
+
+      - name: 🏷️ Create GitHub Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ steps.version.outputs.VERSION }}
+          name: Release ${{ steps.version.outputs.VERSION }}
+          bodyFile: release_notes.txt
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.VERSION, 'alpha') || contains(steps.version.outputs.VERSION, 'beta') }}
+
+  # ─────────────────────────────────────────────────────────────
+  # PUBLISH ARTIFACTS
+  # ─────────────────────────────────────────────────────────────
+  publish-artifacts:
+    name: 📦 Publish Artifacts
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+          server-id: github
+          server-username: ${{ github.actor }}
+          server-password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🏗️ Build Backend
+        run: |
+          cd backend
+          mvn clean package -DskipTests \
+            -Dorg.slf4j.simpleLogger.defaultLogLevel=error
+
+      - name: 📤 Publish Backend JAR
+        run: |
+          cd backend
+          mvn deploy -DskipTests \
+            -Dorg.slf4j.simpleLogger.defaultLogLevel=error
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: 'https://npm.pkg.github.com'
+
+      - name: 📤 Publish Frontend Package
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+          npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

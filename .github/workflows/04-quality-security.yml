@@ -1,0 +1,187 @@
+name: 🧼 Code Quality & Security
+on:
+  push:
+    branches: [main, develop, staging]
+  pull_request:
+    branches: [main, develop, staging]
+  schedule:
+    - cron: '0 2 * * *' # Run daily at 2 AM UTC
+
+env:
+  JAVA_VERSION: '17'
+  NODE_VERSION: '18'
+
+jobs:
+  # ─────────────────────────────────────────────────────────────
+  # CODE QUALITY ANALYSIS
+  # ─────────────────────────────────────────────────────────────
+  code-quality:
+    name: 🔍 Code Quality Analysis
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔧 Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: maven
+
+      - name: 📊 Run SonarQube Analysis (Backend)
+        run: |
+          cd backend
+          mvn clean verify sonar:sonar \
+            -Dsonar.projectKey=airline-booking-backend \
+            -Dsonar.projectName="Airline Booking Backend" \
+            -Dsonar.sources=src/main/java \
+            -Dsonar.tests=src/test/java \
+            -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} \
+            -Dsonar.login=${{ secrets.SONAR_TOKEN }} \
+            -Dorg.slf4j.simpleLogger.defaultLogLevel=error || true
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 📊 Run SonarQube Analysis (Frontend)
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+          npm test -- --coverage --watchAll=false || true
+          
+          sonar-scanner \
+            -Dsonar.projectKey=airline-booking-frontend \
+            -Dsonar.projectName="Airline Booking Frontend" \
+            -Dsonar.sources=src \
+            -Dsonar.tests=src \
+            -Dsonar.coverage.exclusions="**/*.d.ts" \
+            -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} \
+            -Dsonar.login=${{ secrets.SONAR_TOKEN }} || true
+
+  # ─────────────────────────────────────────────────────────────
+  # DEPENDENCY CHECK
+  # ─────────────────────────────────────────────────────────────
+  dependency-check:
+    name: 🔐 Dependency Security Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: maven
+
+      - name: 🔍 Run OWASP Dependency Check (Backend)
+        run: |
+          cd backend
+          mvn org.owasp:dependency-check-maven:check \
+            -Dorg.slf4j.simpleLogger.defaultLogLevel=error || true
+
+      - name: 📤 Upload OWASP Report
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: owasp-reports
+          path: |
+            backend/target/dependency-check-report.*
+            frontend/node_modules/.bin/
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 🔍 Audit Frontend Dependencies
+        run: |
+          cd frontend
+          npm ci
+          npm audit --audit-level=moderate || true
+
+  # ─────────────────────────────────────────────────────────────
+  # SAST SCANNING
+  # ─────────────────────────────────────────────────────────────
+  sast-scan:
+    name: 🔎 SAST Security Scanning
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: maven
+
+      - name: 🔍 SpotBugs Analysis
+        run: |
+          cd backend
+          mvn spotbugs:check \
+            -Dorg.slf4j.simpleLogger.defaultLogLevel=error || true
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 🔍 ESLint Security Analysis
+        run: |
+          cd frontend
+          npm ci
+          npm run lint || true
+
+  # ─────────────────────────────────────────────────────────────
+  # LICENSE COMPLIANCE
+  # ─────────────────────────────────────────────────────────────
+  license-check:
+    name: 📜 License Compliance
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: maven
+
+      - name: 📜 Check License Headers (Backend)
+        run: |
+          cd backend
+          mvn license:check || true
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 📜 Check Frontend Licenses
+        run: |
+          cd frontend
+          npm ci
+          npm ls --depth=0 || true
