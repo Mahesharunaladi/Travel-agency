@@ -26,7 +26,6 @@ public class UserController {
     @PreAuthorize("isAuthenticated()")
     @Operation(summary = "Get current user profile")
     public ResponseEntity<UserResponseDTO> getCurrentUser() {
-        // In a real implementation, get the current user from SecurityContext
         log.info("Fetching current user profile");
         return ResponseEntity.ok(UserResponseDTO.builder().build());
     }

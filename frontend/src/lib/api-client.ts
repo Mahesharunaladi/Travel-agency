@@ -7,7 +7,6 @@ const apiClient: AxiosInstance = axios.create({
   },
 });
 
-// Add interceptor for authentication
 apiClient.interceptors.request.use((config) => {
   const token = typeof window !== 'undefined' ? localStorage.getItem('accessToken') : null;
   if (token) {

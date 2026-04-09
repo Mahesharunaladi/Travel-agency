@@ -28,7 +28,6 @@ export default function LoginPage() {
     try {
       setError(null);
       const result = await authService.login(data.email, data.password);
-      // Redirect to dashboard on success
       window.location.href = '/dashboard';
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
