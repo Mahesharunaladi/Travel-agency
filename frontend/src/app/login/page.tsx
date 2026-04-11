@@ -27,7 +27,7 @@ export default function LoginPage() {
   const onSubmit = async (data: LoginFormData) => {
     try {
       setError(null);
-      const result = await authService.login(data.email, data.password);
+      await authService.login(data.email, data.password);
       window.location.href = '/dashboard';
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
