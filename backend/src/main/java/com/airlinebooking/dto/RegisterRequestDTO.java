@@ -3,6 +3,7 @@ package com.airlinebooking.dto;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+
 public class RegisterRequestDTO {
     @Email(message = "Email should be valid")
     @NotBlank(message = "Email is required")
@@ -71,5 +72,47 @@ public class RegisterRequestDTO {
 
     public void setPhone(String phone) {
         this.phone = phone;
+    }
+
+    // Builder pattern for tests
+    public static Builder builder() {
+        return new Builder();
+    }
+
+    public static class Builder {
+        private String email;
+        private String password;
+        private String firstName;
+        private String lastName;
+        private String phone;
+
+        public Builder email(String email) {
+            this.email = email;
+            return this;
+        }
+
+        public Builder password(String password) {
+            this.password = password;
+            return this;
+        }
+
+        public Builder firstName(String firstName) {
+            this.firstName = firstName;
+            return this;
+        }
+
+        public Builder lastName(String lastName) {
+            this.lastName = lastName;
+            return this;
+        }
+
+        public Builder phone(String phone) {
+            this.phone = phone;
+            return this;
+        }
+
+        public RegisterRequestDTO build() {
+            return new RegisterRequestDTO(email, password, firstName, lastName, phone);
+        }
     }
 }

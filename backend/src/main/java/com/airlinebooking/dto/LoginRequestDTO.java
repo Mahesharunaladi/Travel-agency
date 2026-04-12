@@ -2,6 +2,7 @@ package com.airlinebooking.dto;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+
 public class LoginRequestDTO {
     @Email(message = "Email should be valid")
     @NotBlank(message = "Email is required")
@@ -32,5 +33,29 @@ public class LoginRequestDTO {
 
     public void setPassword(String password) {
         this.password = password;
+    }
+
+    // Builder pattern for tests
+    public static Builder builder() {
+        return new Builder();
+    }
+
+    public static class Builder {
+        private String email;
+        private String password;
+
+        public Builder email(String email) {
+            this.email = email;
+            return this;
+        }
+
+        public Builder password(String password) {
+            this.password = password;
+            return this;
+        }
+
+        public LoginRequestDTO build() {
+            return new LoginRequestDTO(email, password);
+        }
     }
 }

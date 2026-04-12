@@ -47,4 +47,40 @@ public class AuthResponseDTO {
     public void setExpiresIn(long expiresIn) {
         this.expiresIn = expiresIn;
     }
+
+    // Builder pattern for tests
+    public static Builder builder() {
+        return new Builder();
+    }
+
+    public static class Builder {
+        private String accessToken;
+        private String refreshToken;
+        private UserResponseDTO user;
+        private long expiresIn;
+
+        public Builder accessToken(String accessToken) {
+            this.accessToken = accessToken;
+            return this;
+        }
+
+        public Builder refreshToken(String refreshToken) {
+            this.refreshToken = refreshToken;
+            return this;
+        }
+
+        public Builder user(UserResponseDTO user) {
+            this.user = user;
+            return this;
+        }
+
+        public Builder expiresIn(long expiresIn) {
+            this.expiresIn = expiresIn;
+            return this;
+        }
+
+        public AuthResponseDTO build() {
+            return new AuthResponseDTO(accessToken, refreshToken, user, expiresIn);
+        }
+    }
 }

@@ -1,6 +1,7 @@
 package com.airlinebooking.dto;
 
 import com.airlinebooking.entity.Tier;
+
 public class UserResponseDTO {
     private String id;
     private String email;
@@ -87,5 +88,65 @@ public class UserResponseDTO {
 
     public void setLoyaltyPoints(Integer loyaltyPoints) {
         this.loyaltyPoints = loyaltyPoints;
+    }
+
+    // Builder pattern for tests
+    public static Builder builder() {
+        return new Builder();
+    }
+
+    public static class Builder {
+        private String id;
+        private String email;
+        private String firstName;
+        private String lastName;
+        private String phone;
+        private String avatarUrl;
+        private Tier tier;
+        private Integer loyaltyPoints;
+
+        public Builder id(String id) {
+            this.id = id;
+            return this;
+        }
+
+        public Builder email(String email) {
+            this.email = email;
+            return this;
+        }
+
+        public Builder firstName(String firstName) {
+            this.firstName = firstName;
+            return this;
+        }
+
+        public Builder lastName(String lastName) {
+            this.lastName = lastName;
+            return this;
+        }
+
+        public Builder phone(String phone) {
+            this.phone = phone;
+            return this;
+        }
+
+        public Builder avatarUrl(String avatarUrl) {
+            this.avatarUrl = avatarUrl;
+            return this;
+        }
+
+        public Builder tier(Tier tier) {
+            this.tier = tier;
+            return this;
+        }
+
+        public Builder loyaltyPoints(Integer loyaltyPoints) {
+            this.loyaltyPoints = loyaltyPoints;
+            return this;
+        }
+
+        public UserResponseDTO build() {
+            return new UserResponseDTO(id, email, firstName, lastName, phone, avatarUrl, tier, loyaltyPoints);
+        }
     }
 }
