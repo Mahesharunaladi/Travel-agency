@@ -9,19 +9,23 @@ import com.airlinebooking.exception.ResourceAlreadyExistsException;
 import com.airlinebooking.exception.ResourceNotFoundException;
 import com.airlinebooking.repository.UserRepository;
 import com.airlinebooking.security.JwtTokenProvider;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.mindrot.jbcrypt.BCrypt;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-@Slf4j
 @Service
-@RequiredArgsConstructor
 public class AuthService {
+    private static final Logger log = LoggerFactory.getLogger(AuthService.class);
 
     private final UserRepository userRepository;
     private final JwtTokenProvider jwtTokenProvider;
+
+    public AuthService(UserRepository userRepository, JwtTokenProvider jwtTokenProvider) {
+        this.userRepository = userRepository;
+        this.jwtTokenProvider = jwtTokenProvider;
+    }
 
     @Transactional
     public UserResponseDTO register(RegisterRequestDTO request) {
@@ -31,13 +35,12 @@ public class AuthService {
             throw new ResourceAlreadyExistsException("Email already registered: " + request.getEmail());
         }
 
-        User user = User.builder()
-                .email(request.getEmail())
-                .password(BCrypt.hashpw(request.getPassword(), BCrypt.gensalt(12)))
-                .firstName(request.getFirstName())
-                .lastName(request.getLastName())
-                .phone(request.getPhone())
-                .build();
+        User user = new User();
+        user.setEmail(request.getEmail());
+        user.setPassword(BCrypt.hashpw(request.getPassword(), BCrypt.gensalt(12)));
+        user.setFirstName(request.getFirstName());
+        user.setLastName(request.getLastName());
+        user.setPhone(request.getPhone());
 
         User savedUser = userRepository.save(user);
         log.info("User registered successfully with id: {}", savedUser.getId());
@@ -61,12 +64,12 @@ public class AuthService {
 
         log.info("User logged in successfully: {}", request.getEmail());
 
-        return AuthResponseDTO.builder()
-                .accessToken(accessToken)
-                .refreshToken(refreshToken)
-                .user(mapToUserResponseDTO(user))
-                .expiresIn(jwtTokenProvider.getExpirationTime())
-                .build();
+        return new AuthResponseDTO(
+                accessToken,
+                refreshToken,
+                mapToUserResponseDTO(user),
+                jwtTokenProvider.getExpirationTime()
+        );
     }
 
     public AuthResponseDTO refresh(String refreshToken) {
@@ -82,12 +85,12 @@ public class AuthService {
         User user = userRepository.findByEmail(username)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
-        return AuthResponseDTO.builder()
-                .accessToken(newAccessToken)
-                .refreshToken(refreshToken)
-                .user(mapToUserResponseDTO(user))
-                .expiresIn(jwtTokenProvider.getExpirationTime())
-                .build();
+        return new AuthResponseDTO(
+                newAccessToken,
+                refreshToken,
+                mapToUserResponseDTO(user),
+                jwtTokenProvider.getExpirationTime()
+        );
     }
 
     public UserResponseDTO getUserById(String id) {
@@ -103,15 +106,15 @@ public class AuthService {
     }
 
     private UserResponseDTO mapToUserResponseDTO(User user) {
-        return UserResponseDTO.builder()
-                .id(user.getId())
-                .email(user.getEmail())
-                .firstName(user.getFirstName())
-                .lastName(user.getLastName())
-                .phone(user.getPhone())
-                .avatarUrl(user.getAvatarUrl())
-                .tier(user.getTier())
-                .loyaltyPoints(user.getLoyaltyPoints())
-                .build();
+        return new UserResponseDTO(
+                user.getId(),
+                user.getEmail(),
+                user.getFirstName(),
+                user.getLastName(),
+                user.getPhone(),
+                user.getAvatarUrl(),
+                user.getTier(),
+                user.getLoyaltyPoints()
+        );
     }
 }

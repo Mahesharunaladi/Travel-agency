@@ -195,13 +195,12 @@ export default function Home() {
           
           <div className="grid md:grid-cols-4 gap-8">
             {[
-              { icon: '🔒', title: 'Secure Booking', desc: 'PCI-DSS compliant payments with fraud detection' },
-              { icon: '⚡', title: 'Instant Confirmation', desc: 'Get your e-ticket within seconds of booking' },
-              { icon: '⭐', title: 'Loyalty Rewards', desc: 'Earn points on every flight, redeem for upgrades' },
-              { icon: '🎧', title: 'Premium Support', desc: '24/7 priority support for Plus & Premium tiers' },
+              { title: 'Secure Booking', desc: 'PCI-DSS compliant payments with fraud detection' },
+              { title: 'Instant Confirmation', desc: 'Get your e-ticket within seconds of booking' },
+              { title: 'Loyalty Rewards', desc: 'Earn points on every flight, redeem for upgrades' },
+              { title: 'Premium Support', desc: '24/7 priority support for Plus & Premium tiers' },
             ].map((feature, idx) => (
               <div key={idx} className="bg-slate-700/50 border border-slate-600 rounded-lg p-6 hover:border-blue-500 transition">
-                <div className="text-4xl mb-4">{feature.icon}</div>
                 <h3 className="text-xl font-bold text-white mb-2">{feature.title}</h3>
                 <p className="text-slate-400">{feature.desc}</p>
               </div>
