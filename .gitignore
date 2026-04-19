@@ -54,3 +54,4 @@ yarn.lock
 prisma/migrations/
 .turbo/
 .cache/
+.env.example
